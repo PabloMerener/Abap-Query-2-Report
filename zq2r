@@ -1,0 +1,1923 @@
+*&---------------------------------------------------------------------*
+*&                                       Buenos Aires, 7 de mayo de 2014
+*& Query to Report (Q2R)
+*& powered by zq2r.wordpress.com
+*& Programmer: Pablo Merener
+*&
+*& Version 1.1: 16 de octubre de 2014 ("v2)
+*&---------------------------------------------------------------------*
+REPORT zq2r.
+
+*&---------------------------------------------------------------------*
+*&  Include           ZQ2R_TOP
+*&---------------------------------------------------------------------*
+TYPE-POOLS icon.
+
+TABLES sscrfields.
+
+CONSTANTS:
+  c_symsgty_e  TYPE symsgty VALUE 'E',
+
+  c_top_suffix TYPE char4 VALUE '_TOP',
+  c_sel_suffix TYPE char4 VALUE '_SEL',
+  c_f01_suffix TYPE char4 VALUE '_F01',
+
+  c_include_suffix_sscr TYPE char4 VALUE 'SSCR',
+  c_include_suffix_u02  TYPE char4 VALUE 'U02'.
+
+TYPES:
+  ty_char255  TYPE                   char255,
+  tyt_char255 TYPE STANDARD TABLE OF char255,
+
+  ty_sel_fields    TYPE                   rsaqspname,
+  tyt_sel_fields   TYPE STANDARD TABLE OF rsaqspname,
+  ty_fields        TYPE                   rsaqrqlist,
+  tyt_fields       TYPE STANDARD TABLE OF rsaqrqlist,
+  tyt_fields_dd03l TYPE STANDARD TABLE OF dd03l,
+
+  BEGIN OF ty_tables,
+    table     TYPE tabname,
+  END OF ty_tables,
+  tyt_tables TYPE STANDARD TABLE OF ty_tables,
+
+  BEGIN OF ty_sel_fields_alv,
+    parameter     TYPE flag,
+    sel_field     TYPE char8,
+    obligatory    TYPE flag,
+    hidden        TYPE flag,
+    disabled      TYPE flag,
+    default       TYPE flag,
+    default_value TYPE bdc_fval,
+    ftext         TYPE rsaqspname-ftext,
+    fieldname     TYPE fieldname,
+    table_ref     TYPE tabname,
+    field_ref     TYPE fieldname,
+  END OF ty_sel_fields_alv,
+  tyt_sel_fields_alv TYPE STANDARD TABLE OF ty_sel_fields_alv,
+
+  tyt_sval TYPE STANDARD TABLE OF sval,
+
+  BEGIN OF ty_sel_fields_texts,
+    ddlanguage TYPE dd04t-ddlanguage,
+    sptxt      TYPE t002t-sptxt,
+    tabname    TYPE dd03l-tabname,
+    fieldname  TYPE dd03l-fieldname,
+    ddtext     TYPE dd04t-ddtext,
+  END OF ty_sel_fields_texts,
+  tyt_sel_fields_texts TYPE STANDARD TABLE OF ty_sel_fields_texts,
+
+  BEGIN OF ty_sel_fields_texts_alv,
+    ddlanguage TYPE dd04t-ddlanguage,
+    sptxt      TYPE t002t-sptxt,
+    ddtext     TYPE dd04t-ddtext,
+  END OF ty_sel_fields_texts_alv,
+  tyt_sel_fields_texts_alv TYPE STANDARD TABLE OF ty_sel_fields_texts_alv,
+
+  BEGIN OF ty_includes,
+    include TYPE program_id,
+  END OF ty_includes,
+  tyt_includes TYPE STANDARD TABLE OF ty_includes.
+
+DATA:
+  functxt TYPE smp_dyntxt,
+
+  t_sel_fields       TYPE STANDARD TABLE OF rsaqspname,
+  t_sel_fields_texts TYPE STANDARD TABLE OF ty_sel_fields_texts,
+  t_fields           TYPE STANDARD TABLE OF rsaqrqlist,
+  t_fields_dd03l     TYPE STANDARD TABLE OF dd03l,
+  t_tables           TYPE TABLE OF          ty_tables,
+  t_sel_fields_alv   TYPE STANDARD TABLE OF ty_sel_fields_alv,
+  t_sel_fields_texts_alv TYPE STANDARD TABLE OF ty_sel_fields_texts_alv,
+
+  t_assigned_report TYPE TABLE OF ty_char255,                        "v2
+  t_code       TYPE TABLE OF ty_char255,
+  t_top_code   TYPE TABLE OF ty_char255,
+  t_code_sscr  TYPE TABLE OF ty_char255,
+  t_code_u02   TYPE TABLE OF ty_char255,
+  t_sql_code   TYPE TABLE OF ty_char255,
+  t_sel_code   TYPE TABLE OF ty_char255,
+  t_forms_code TYPE TABLE OF ty_char255,
+
+  t_includes   TYPE STANDARD TABLE OF ty_includes,
+
+  gv_query_include_prefix TYPE program_id,
+  gv_new_report           TYPE program_id,
+  gv_new_version_of_assig_report TYPE abap_bool,                     "v2
+
+  o_alv                 TYPE REF TO cl_salv_table,
+  o_selection_texts_alv TYPE REF TO cl_salv_table.
+
+*----------------------------------------------------------------------*
+*       CLASS lcl_event_handler DEFINITION
+*----------------------------------------------------------------------*
+CLASS lcl_event_handler DEFINITION.
+
+  PUBLIC SECTION.
+    METHODS:
+      on_link_click FOR EVENT link_click OF cl_salv_events_table
+        IMPORTING row column.
+
+ENDCLASS.                    "lcl_event_handler DEFINITION
+
+*----------------------------------------------------------------------*
+*       CLASS lcl_event_handler IMPLEMENTATION
+*----------------------------------------------------------------------*
+CLASS lcl_event_handler IMPLEMENTATION.
+
+  METHOD on_link_click.
+
+    FIELD-SYMBOLS <flag> TYPE flag.
+
+    DATA: ls_fields_sel       TYPE ty_sel_fields_alv,
+          lv_fieldname        TYPE fieldname VALUE 'LS_FIELDS_SEL-'.
+
+    IF column = 'FTEXT'.
+      PERFORM set_selection_field_texts USING row
+                                     CHANGING t_sel_fields_alv
+                                              t_sel_fields_texts
+                                              t_sel_fields_texts_alv.
+    ELSEIF column = 'DDTEXT'.
+      PERFORM selection_text_popup USING o_alv
+                                         o_selection_texts_alv
+                                         row
+                                CHANGING t_sel_fields_texts_alv
+                                         t_sel_fields_alv
+                                         t_sel_fields_texts.
+    ENDIF.
+
+    CHECK column = 'PARAMETER'  OR
+          column = 'OBLIGATORY' OR
+          column = 'HIDDEN'     OR
+          column = 'DISABLED'   OR
+          column = 'DEFAULT'.
+
+    CONCATENATE lv_fieldname column INTO lv_fieldname.
+    ASSIGN (lv_fieldname) TO <flag>.
+
+    LOOP AT t_sel_fields_alv INTO ls_fields_sel FROM row.
+
+      IF column = 'PARAMETER'.
+        IF <flag> IS INITIAL.
+          ls_fields_sel-sel_field(1) = 'p'.
+        ELSE.
+          ls_fields_sel-sel_field(1) = 's'.
+        ENDIF.
+      ENDIF.
+
+      IF <flag> IS INITIAL.
+        <flag> = 'X'.
+
+        CASE column.
+          WHEN 'OBLIGATORY'. CLEAR ls_fields_sel-hidden.
+          WHEN 'HIDDEN'.     CLEAR ls_fields_sel-obligatory.
+          WHEN 'DEFAULT'.
+            PERFORM default_popup USING ls_fields_sel-table_ref
+                                        ls_fields_sel-field_ref
+                               CHANGING ls_fields_sel-default_value.
+
+            IF ls_fields_sel-default_value IS INITIAL.
+              CLEAR <flag>.
+            ENDIF.
+        ENDCASE.
+      ELSE.
+        CLEAR <flag>.
+        IF column = 'DEFAULT'.
+          CLEAR ls_fields_sel-default_value.
+        ENDIF.
+      ENDIF.
+
+      MODIFY t_sel_fields_alv FROM ls_fields_sel.
+      EXIT.
+    ENDLOOP.
+
+    o_alv->refresh( ).
+  ENDMETHOD.                    "on_link_click
+
+ENDCLASS.                    "lcl_event_handler IMPLEMENTATION
+
+*&---------------------------------------------------------------------*
+*&  Include           ZQ2R_SEL
+*&---------------------------------------------------------------------*
+SELECTION-SCREEN BEGIN OF BLOCK a WITH FRAME TITLE text-001.
+
+*SELECTION-SCREEN COMMENT /1(20) text-002.
+
+PARAMETERS:
+  p_queryr TYPE program_id.
+SELECTION-SCREEN END OF BLOCK a.
+
+SELECTION-SCREEN BEGIN OF BLOCK b WITH FRAME TITLE text-002.
+PARAMETERS:
+  p_top    TYPE flag AS CHECKBOX DEFAULT abap_true,
+  p_sel    TYPE flag AS CHECKBOX DEFAULT abap_true,
+  p_forms  TYPE flag AS CHECKBOX DEFAULT abap_true.
+SELECTION-SCREEN END OF BLOCK b.
+
+*&---------------------------------------------------------------------*
+*&  Include           ZQ2R_F01
+*&---------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*&      Form  INSERT_INCLUDE
+*&---------------------------------------------------------------------*
+FORM insert_include USING p_create_include TYPE flag
+                          p_report         TYPE program_id
+                          p_suffix         TYPE char4
+                          t_code           TYPE tyt_char255
+                 CHANGING t_includes       TYPE tyt_includes.
+
+  DATA: lv_include_name TYPE program_id,
+        ls_includes     TYPE ty_includes.
+
+  CHECK NOT p_create_include IS INITIAL.
+
+  CONCATENATE p_report p_suffix INTO lv_include_name.
+
+  INSERT REPORT lv_include_name FROM t_code PROGRAM TYPE 'I'.
+
+  ls_includes-include = lv_include_name.
+  APPEND ls_includes TO t_includes.
+
+ENDFORM.                    " INSERT_INCLUDE
+
+*&---------------------------------------------------------------------*
+*&      Form  insert_line
+*&---------------------------------------------------------------------*
+FORM insert_line USING t_code TYPE tyt_char255
+                        p_line TYPE ty_char255.
+
+  APPEND p_line TO t_code.
+
+ENDFORM.                    " insert_line
+
+*&---------------------------------------------------------------------*
+*&      Form  INSERT_REPORT
+*&---------------------------------------------------------------------*
+FORM insert_report USING p_report         TYPE program_id
+                         t_sel_fields_alv TYPE tyt_sel_fields_alv
+                         t_includes       TYPE tyt_includes
+                         p_top            TYPE flag
+                         p_sel            TYPE flag
+                         p_forms          TYPE flag
+                         t_top_code       TYPE tyt_char255
+                         t_sel_code       TYPE tyt_char255
+                         t_forms_code     TYPE tyt_char255
+                CHANGING t_code           TYPE tyt_char255.
+
+  DATA: lv_line           TYPE ty_char255,
+        lv_line_2         TYPE ty_char255,
+        ls_includes       TYPE ty_includes,
+        ls_sel_fields_alv TYPE ty_sel_fields_alv,
+        t_disabled_fields TYPE tyt_sel_fields_alv.
+
+  CLEAR t_code.
+
+  PERFORM insert_line USING t_code '*&---------------------------------------------------------------------*'.
+
+  CONCATENATE '*& Report' p_report INTO lv_line SEPARATED BY space.
+  PERFORM insert_line USING t_code lv_line.
+
+  PERFORM insert_line:
+    USING t_code '*&---------------------------------------------------------------------*'.
+
+  CONCATENATE sy-datum+4(2) '/' sy-datum+6(2) '/' sy-datum(4) INTO lv_line.
+  CONCATENATE '* Date        : ' lv_line INTO lv_line SEPARATED BY space.
+
+  PERFORM insert_line:
+    USING t_code lv_line,
+    USING t_code '*&---------------------------------------------------------------------*'.
+
+  CONCATENATE p_report '.' INTO lv_line.
+  TRANSLATE lv_line TO LOWER CASE.
+  CONCATENATE 'REPORT' lv_line INTO lv_line SEPARATED BY space.
+  PERFORM insert_line:
+    USING t_code  lv_line,
+    USING t_code  ''.
+
+* Includes
+  LOOP AT t_includes INTO ls_includes.
+    CLEAR lv_line.
+    AT FIRST.
+      lv_line = 'INCLUDE:'.
+    ENDAT.
+    lv_line+9 = ls_includes-include.
+    CONCATENATE lv_line ',' INTO lv_line.
+    AT LAST.
+      REPLACE ',' WITH '.' INTO lv_line.
+    ENDAT.
+    PERFORM insert_line USING t_code lv_line.
+  ENDLOOP.
+
+  PERFORM insert_code_into_report:
+    USING p_top   t_top_code   CHANGING t_code,
+    USING p_sel   t_sel_code   CHANGING t_code,
+    USING p_forms t_forms_code CHANGING t_code.
+
+* Form  SET_SELECTION_FIELD_DISABLED
+  t_disabled_fields = t_sel_fields_alv.
+  DELETE t_disabled_fields WHERE disabled IS INITIAL.
+  LOOP AT t_disabled_fields INTO ls_sel_fields_alv.
+    CLEAR lv_line.
+
+    AT FIRST.
+      PERFORM insert_line:
+        USING t_code '',
+        USING t_code 'AT SELECTION-SCREEN OUTPUT.'.
+
+      lv_line = '  PERFORM set_selection_field_disabled:'.
+    ENDAT.
+    lv_line+40 = 'USING'.
+    lv_line+46 = ''''.
+
+    TRANSLATE ls_sel_fields_alv-sel_field TO UPPER CASE.
+    CONCATENATE lv_line
+                ls_sel_fields_alv-sel_field
+                ''''
+                ','
+           INTO lv_line.
+
+    AT LAST.
+      REPLACE ',' WITH '.' INTO lv_line.
+    ENDAT.
+    PERFORM insert_line USING t_code lv_line.
+  ENDLOOP.
+
+* START-OF-SELECTION
+  PERFORM insert_line:
+    USING t_code '',
+    USING t_code 'START-OF-SELECTION.'.
+
+  IF t_sel_fields_alv IS INITIAL.
+    PERFORM insert_line USING t_code '  PERFORM get_data CHANGING t_data.'.
+  ELSE.
+    LOOP AT t_sel_fields_alv INTO ls_sel_fields_alv.
+      CLEAR lv_line.
+      IF sy-tabix = 1.
+        lv_line = '  PERFORM get_data USING'.
+      ENDIF.
+
+      lv_line+25 = ls_sel_fields_alv-sel_field.
+
+      IF ls_sel_fields_alv-parameter IS INITIAL.
+        CONCATENATE lv_line '[]' INTO lv_line.
+      ENDIF.
+
+      PERFORM insert_line USING t_code lv_line.
+
+      AT LAST.
+        PERFORM insert_line USING t_code '                CHANGING t_data.'.
+      ENDAT.
+    ENDLOOP.
+  ENDIF.
+
+  PERFORM insert_line:
+    USING t_code '',
+    USING t_code 'END-OF-SELECTION.',
+    USING t_code '  PERFORM alv USING t_data.'.
+
+  INSERT REPORT p_report FROM t_code.
+
+  IF sy-subrc = 0.
+    MESSAGE s888(sabapdocu) WITH p_report 'was created!'.
+
+    SET PARAMETER ID 'RID' FIELD p_report.
+  ENDIF.
+
+ENDFORM.                    " INSERT_REPORT
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_QUERY_INCLUDE_PREFIX
+*&---------------------------------------------------------------------*
+FORM get_query_include_prefix
+
+     USING p_query              TYPE program_id
+  CHANGING p_query_program_name TYPE program_id.
+
+  CLEAR p_query_program_name.
+
+  SELECT SINGLE include
+    FROM d010inc
+    INTO p_query_program_name
+   WHERE master = p_query.
+
+  IF sy-subrc = 0.
+    p_query_program_name = p_query_program_name(22).
+  ELSE.
+*   & & & &
+    MESSAGE s888(sabapdocu) WITH p_queryr 'program not found'
+    DISPLAY LIKE c_symsgty_e.
+
+*   Get back to selection screen
+    PERFORM %_list_return IN PROGRAM sapmssy0.
+  ENDIF.
+
+ENDFORM.                    " GET_QUERY_INCLUDE_PREFIX
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_TABLES
+*&---------------------------------------------------------------------*
+FORM get_tables USING t_sel_fields_alv TYPE tyt_sel_fields_alv
+             CHANGING t_tables         TYPE tyt_tables.
+
+  DATA:
+    t_sel_fields_temp TYPE tyt_sel_fields_alv,
+    ls_sel_fields     TYPE ty_sel_fields_alv,
+    ls_tables         TYPE ty_tables.
+
+  CLEAR t_tables.
+
+  t_sel_fields_temp = t_sel_fields_alv.
+
+  LOOP AT t_sel_fields_temp INTO ls_sel_fields
+    WHERE parameter IS INITIAL.
+
+    ls_tables-table = ls_sel_fields-table_ref.
+    TRANSLATE ls_tables-table TO LOWER CASE.
+    COLLECT ls_tables INTO t_tables.
+  ENDLOOP.
+
+ENDFORM.                    " GET_TABLES
+
+*&---------------------------------------------------------------------*
+*&      Form  READ_INCLUDE
+*&---------------------------------------------------------------------*
+FORM read_include USING p_report TYPE program_id
+                        p_suffix TYPE char4
+               CHANGING t_code   TYPE tyt_char255.
+
+  DATA: lv_include TYPE program_id.
+
+  CLEAR t_code.
+
+  CONCATENATE p_report p_suffix  INTO lv_include.
+
+  IF p_suffix = c_include_suffix_u02.
+    REPLACE 'IQ' IN lv_include WITH 'LIQ'.                     "HardCode
+  ENDIF.
+
+  READ REPORT lv_include INTO t_code.
+
+ENDFORM.                    " READ_INCLUDE
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_SQL
+*&---------------------------------------------------------------------*
+FORM get_sql USING t_code           TYPE tyt_char255
+                   t_sel_fields_alv TYPE tyt_sel_fields_alv
+          CHANGING t_sql_code       TYPE tyt_char255.
+
+  DATA:
+    lv_code_line    TYPE ty_char255,
+    lv_command      TYPE ty_char255,
+    lv_sql_clause   TYPE char5,
+    lv_spname       TYPE ty_sel_fields-spname,
+    lv_spname_index TYPE fieldname,
+    lv_line_length  TYPE i,
+    lv_last_char    TYPE c,
+
+    ls_sel_fields_alv TYPE ty_sel_fields_alv.
+
+  CLEAR t_sql_code.
+
+  LOOP AT t_code INTO lv_code_line.
+    lv_command = lv_code_line.
+    CONDENSE lv_command.
+
+    IF lv_sql_clause IS INITIAL.
+      IF lv_command(4) = 'from'.
+        lv_sql_clause = lv_command(4).
+        lv_line_length = strlen( lv_code_line ) - 1.
+        lv_last_char = lv_code_line+lv_line_length(1).
+        IF lv_last_char = '.'.
+          lv_code_line = lv_code_line(lv_line_length).
+          PERFORM insert_line: USING t_sql_code lv_code_line,
+                                USING t_sql_code '    INTO TABLE t_data.'.
+          EXIT.
+        ELSE.
+          PERFORM insert_line USING t_sql_code lv_code_line.
+        ENDIF.
+      ENDIF.
+    ELSE.
+      IF lv_command(5) = 'where'.
+        lv_sql_clause = lv_command(5).
+        PERFORM insert_line USING t_sql_code '    INTO TABLE t_data'.
+      ENDIF.
+
+      IF lv_sql_clause = 'where'.
+        SPLIT lv_command AT 'SP$' INTO lv_command
+                                       lv_spname_index.
+
+        lv_line_length = strlen( lv_code_line ) - 1.
+        lv_last_char = lv_code_line+lv_line_length(1).
+
+        CONCATENATE 'SP$' lv_spname_index INTO lv_spname.
+
+        READ TABLE t_sel_fields_alv WITH KEY fieldname = lv_spname
+              INTO ls_sel_fields_alv.
+
+        REPLACE lv_spname IN lv_code_line WITH ls_sel_fields_alv-sel_field.
+
+        IF NOT ls_sel_fields_alv-parameter IS INITIAL.
+          REPLACE ' in ' IN lv_code_line WITH ' =  '.
+        ENDIF.
+      ENDIF.
+
+      PERFORM insert_line USING t_sql_code lv_code_line.
+
+      IF lv_last_char = '.'.
+        EXIT.
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
+
+ENDFORM.                    " GET_SQL
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_SEL
+*&---------------------------------------------------------------------*
+FORM get_sel USING p_report         TYPE program_id
+                   t_code           TYPE tyt_char255
+                   t_sel_fields_alv TYPE tyt_sel_fields_alv
+          CHANGING t_sel_code       TYPE tyt_char255.
+
+  DATA:
+    lv_code_line   TYPE ty_char255,
+    lv_dummy       TYPE c,
+    lv_spname      TYPE fieldname,
+    lv_line_length TYPE i,
+
+
+    ls_sel_fields_alv TYPE ty_sel_fields_alv.
+
+  PERFORM get_include_title USING p_report
+                                  c_sel_suffix
+                         CHANGING t_sel_code.
+
+  PERFORM insert_line:
+    USING t_sel_code 'SELECTION-SCREEN BEGIN OF BLOCK a WITH FRAME.',
+    USING t_sel_code ''.
+
+  LOOP AT t_code INTO lv_code_line.
+    CHECK lv_code_line(14) = 'select-options'.
+
+    SPLIT lv_code_line AT space INTO lv_dummy
+                                     lv_spname
+                                     lv_dummy.
+
+    READ TABLE t_sel_fields_alv WITH KEY fieldname = lv_spname
+          INTO ls_sel_fields_alv.
+
+    REPLACE lv_spname IN lv_code_line WITH ls_sel_fields_alv-sel_field.
+
+    IF NOT ls_sel_fields_alv-parameter IS INITIAL.
+      REPLACE 'select-options' IN lv_code_line WITH 'PARAMETER'.
+      REPLACE ' for '          IN lv_code_line WITH ' TYPE '.
+    ENDIF.
+
+*   delete dot
+    lv_line_length = strlen( lv_code_line ) - 1.
+    lv_code_line = lv_code_line(lv_line_length).
+
+    IF NOT ls_sel_fields_alv-obligatory IS INITIAL.
+      CONCATENATE lv_code_line
+                  'OBLIGATORY'
+             INTO lv_code_line SEPARATED BY space.
+    ENDIF.
+
+    IF NOT ls_sel_fields_alv-hidden IS INITIAL.
+      CONCATENATE lv_code_line
+                  'NO-DISPLAY'
+             INTO lv_code_line SEPARATED BY space.
+    ENDIF.
+
+    IF NOT ls_sel_fields_alv-default IS INITIAL.
+      CONCATENATE lv_code_line
+                  'DEFAULT'
+                  'c_'
+             INTO lv_code_line SEPARATED BY space.
+
+      CONCATENATE lv_code_line
+                  ls_sel_fields_alv-sel_field+2
+             INTO lv_code_line.
+    ENDIF.
+
+*   add dot
+    CONCATENATE lv_code_line
+                '.'
+           INTO lv_code_line.
+
+    PERFORM insert_line USING t_sel_code lv_code_line.
+  ENDLOOP.
+
+  PERFORM insert_line:
+    USING t_sel_code '',
+    USING t_sel_code 'SELECTION-SCREEN END OF BLOCK a.'.
+
+ENDFORM.                    " GET_SEL
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_INCLUDE_TOP
+*&---------------------------------------------------------------------*
+FORM get_include_top USING p_report         TYPE program_id
+                           t_tables         TYPE tyt_tables
+                           t_sel_fields_alv TYPE tyt_sel_fields_alv
+                           t_dd03l          TYPE tyt_fields_dd03l
+                  CHANGING t_code_top       TYPE tyt_char255.
+
+  DATA:
+    ls_tables         TYPE ty_tables,
+    ls_sel_fields_alv TYPE ty_sel_fields_alv,
+    t_sel_fields      TYPE tyt_sel_fields_alv,
+    lv_line           TYPE ty_char255,
+    ls_fields         TYPE ty_fields,
+    ls_dd03l          TYPE dd03l,
+    lv_length         TYPE i,
+    lv_aux            TYPE i.
+
+  PERFORM get_include_title USING p_report
+                                  c_top_suffix
+                         CHANGING t_code_top.
+
+* CONSTANTS
+  t_sel_fields = t_sel_fields_alv.
+  DELETE t_sel_fields WHERE default IS INITIAL.
+
+  LOOP AT t_sel_fields INTO ls_sel_fields_alv.
+    AT FIRST.
+      PERFORM insert_line USING t_code_top 'CONSTANTS:'.
+    ENDAT.
+    TRANSLATE ls_sel_fields_alv TO LOWER CASE.
+    CLEAR lv_line.
+    lv_line+2  = 'c_'.
+    lv_line+4  = ls_sel_fields_alv-sel_field+2.
+    lv_line+11 = 'TYPE'.
+    lv_line+16 = ls_sel_fields_alv-table_ref.
+
+    CONCATENATE lv_line
+                '-'
+                ls_sel_fields_alv-field_ref
+           INTO lv_line.
+
+    CONCATENATE lv_line
+                'VALUE'
+                ''''
+           INTO lv_line SEPARATED BY space.
+
+    TRANSLATE ls_sel_fields_alv-default_value TO UPPER CASE.
+    CONCATENATE lv_line
+                ls_sel_fields_alv-default_value
+                ''''
+           INTO lv_line.
+
+    AT LAST.
+      CONCATENATE lv_line '.' INTO lv_line.
+      PERFORM insert_line: USING t_code_top lv_line,
+                            USING t_code_top ''.
+      EXIT.
+    ENDAT.
+
+    CONCATENATE lv_line ',' INTO lv_line.
+    PERFORM insert_line: USING t_code_top lv_line.
+  ENDLOOP.
+
+* Tables
+  LOOP AT t_tables INTO ls_tables.
+    AT FIRST.
+      PERFORM insert_line USING t_code_top 'TABLES:'.
+    ENDAT.
+
+    CONCATENATE ls_tables-table ',' INTO lv_line.
+    lv_line+2(31) = lv_line.
+    lv_line(2)    = space.
+
+    AT LAST.
+      REPLACE ',' IN lv_line WITH '.'.
+    ENDAT.
+
+    PERFORM insert_line USING t_code_top lv_line.
+    AT LAST.
+      PERFORM insert_line USING t_code_top space.
+    ENDAT.
+  ENDLOOP.
+
+  PERFORM insert_line USING t_code_top 'TYPES:'.
+
+* TYPE RANGE OF
+  t_sel_fields = t_sel_fields_alv.
+  DELETE t_sel_fields WHERE NOT parameter IS INITIAL.
+
+  LOOP AT t_sel_fields INTO ls_sel_fields_alv.
+    TRANSLATE ls_sel_fields_alv TO LOWER CASE.
+    CLEAR lv_line.
+    lv_line+2  = 'tyr_'.
+    lv_line+6  = ls_sel_fields_alv-sel_field+2.
+    lv_line+13 = 'TYPE RANGE OF'.
+    CONCATENATE lv_line ls_sel_fields_alv-table_ref INTO lv_line SEPARATED BY space.
+    CONCATENATE lv_line '-' ls_sel_fields_alv-field_ref INTO lv_line.
+    CONCATENATE lv_line ',' INTO lv_line.
+    PERFORM insert_line USING t_code_top lv_line.
+
+    AT LAST.
+      PERFORM insert_line USING t_code_top ''.
+      EXIT.
+    ENDAT.
+  ENDLOOP.
+
+* Internal tables
+* Get max field length
+  LOOP AT t_dd03l INTO ls_dd03l.
+    IF lv_length < strlen( ls_dd03l-fieldname ).
+      lv_length = strlen( ls_dd03l-fieldname ).
+    ENDIF.
+  ENDLOOP.
+
+  LOOP AT t_fields INTO ls_fields.
+    AT FIRST.
+      PERFORM insert_line USING t_code_top '  BEGIN OF ty_data,'.
+    ENDAT.
+
+    READ TABLE t_dd03l INTO ls_dd03l INDEX ls_fields-pos.
+
+    CLEAR lv_line.
+    TRANSLATE ls_dd03l-fieldname TO LOWER CASE.
+    lv_line+4(lv_length) = ls_dd03l-fieldname.
+    lv_aux = lv_length + 5.
+    lv_line+lv_aux(4)  = 'TYPE'.
+    lv_aux = lv_aux + 5.
+
+    TRANSLATE ls_fields-name TO LOWER CASE.
+    CONCATENATE ls_fields-name
+                ','
+           INTO lv_line+lv_aux.
+
+    APPEND lv_line TO t_code_top.
+
+    AT LAST.
+      PERFORM insert_line:
+        USING t_code_top '  END OF ty_data,',
+        USING t_code_top '  tyt_data TYPE STANDARD TABLE OF ty_data.',
+        USING t_code_top '',
+        USING t_code_top 'DATA t_data TYPE STANDARD TABLE OF ty_data.'.
+    ENDAT.
+  ENDLOOP.
+
+ENDFORM.                    " GET_INCLUDE_TOP
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_INCLUDE_TITLE
+*&---------------------------------------------------------------------*
+FORM get_include_title USING p_report TYPE program_id
+                             p_suffix TYPE char4
+                    CHANGING t_code   TYPE tyt_char255.
+
+  DATA:
+    lv_line         TYPE ty_char255,
+    lv_include_name TYPE program_id.
+
+  CLEAR t_code.
+
+  PERFORM insert_line
+    USING t_code
+          '*&---------------------------------------------------------------------*'.
+
+  CONCATENATE:
+    p_report p_suffix             INTO lv_include_name,
+    '*&  Include' lv_include_name INTO lv_line                 "HardCode
+                          SEPARATED BY space.
+
+  PERFORM insert_line USING t_code lv_line.
+
+  PERFORM insert_line
+    USING t_code '*&---------------------------------------------------------------------*'.
+ENDFORM.                    " GET_INCLUDE_TITLE
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_INCLUDE_F01
+*&---------------------------------------------------------------------*
+FORM get_include_f01 USING p_report         TYPE program_id
+                           t_sel_fields_alv TYPE tyt_sel_fields_alv
+                           t_fields         TYPE tyt_fields
+                           t_fields_dd03l   TYPE tyt_fields_dd03l
+                           t_sql_code       TYPE tyt_char255
+                  CHANGING t_code_f01       TYPE tyt_char255.
+
+  DATA:
+    ls_fields         TYPE                   ty_fields,
+    lv_field          TYPE                   ty_char255,
+    lv_line           TYPE                   ty_char255,
+    ls_sel_fields_alv TYPE                   ty_sel_fields_alv,
+    t_sorted_fields   TYPE STANDARD TABLE OF ty_fields,
+    ls_fields_dd03l   TYPE                   dd03l.
+
+  PERFORM get_include_title USING p_report
+                                  c_f01_suffix
+                         CHANGING t_code_f01.
+
+* Form  SET_SELECTION_FIELD_DISABLED
+  READ TABLE t_sel_fields_alv WITH KEY disabled = 'X' INTO ls_sel_fields_alv.
+
+  IF sy-subrc = 0.
+    PERFORM insert_line:
+    USING t_code_f01 '*&---------------------------------------------------------------------*',
+    USING t_code_f01 '*&      Form  SET_SELECTION_FIELD_DISABLED',
+    USING t_code_f01 '*&---------------------------------------------------------------------*',
+    USING t_code_f01 'FORM set_selection_field_disabled USING p_spname TYPE aqs_spname.',
+    USING t_code_f01 '',
+    USING t_code_f01 '  DATA lv_spname_length TYPE i.',
+    USING t_code_f01 '',
+    USING t_code_f01 '  lv_spname_length = strlen( p_spname ).',
+    USING t_code_f01 '',
+    USING t_code_f01 '  LOOP AT SCREEN.',
+    USING t_code_f01 '    IF screen-name(lv_spname_length) = p_spname.',
+    USING t_code_f01 '      screen-input = 0.',
+    USING t_code_f01 '      MODIFY SCREEN.',
+    USING t_code_f01 '    ENDIF.',
+    USING t_code_f01 '  ENDLOOP.',
+    USING t_code_f01 '',
+    USING t_code_f01 'ENDFORM.                    " SET_SELECTION_FIELD_DISABLED',
+    USING t_code_f01 ''.
+  ENDIF.
+
+* Form  GET_DATA
+  PERFORM insert_line:
+    USING t_code_f01 '*&---------------------------------------------------------------------*',
+    USING t_code_f01 '*&      Form  GET_DATA',
+    USING t_code_f01 '*&---------------------------------------------------------------------*'.
+
+  IF t_sel_fields_alv IS INITIAL.
+    PERFORM insert_line:
+      USING t_code_f01 'FORM get_data CHANGING t_data TYPE tyt_data.',
+      USING t_code_f01 ''.
+  ELSE.
+    LOOP AT t_sel_fields_alv INTO ls_sel_fields_alv.
+      TRANSLATE ls_sel_fields_alv TO LOWER CASE.
+      CLEAR lv_line.
+      IF sy-tabix = 1.
+        lv_line = 'FORM get_data USING'.
+      ENDIF.
+
+      lv_line+20 = ls_sel_fields_alv-sel_field.
+      lv_line+29 = 'TYPE'.
+
+      IF ls_sel_fields_alv-parameter IS INITIAL.
+        CONCATENATE lv_line
+                    'tyr_'
+               INTO lv_line SEPARATED BY space.
+
+        CONCATENATE lv_line
+                    ls_sel_fields_alv-sel_field+2
+               INTO lv_line..
+      ELSE.
+        CONCATENATE lv_line
+                    ls_sel_fields_alv-table_ref
+               INTO lv_line SEPARATED BY space.
+
+        CONCATENATE lv_line
+                    '-'
+                    ls_sel_fields_alv-field_ref
+               INTO lv_line.
+      ENDIF.
+
+      PERFORM insert_line USING t_code_f01 lv_line.
+
+      AT LAST.
+        PERFORM insert_line:
+          USING t_code_f01 '           CHANGING t_data   TYPE tyt_data.',
+          USING t_code_f01 ''.
+      ENDAT.
+    ENDLOOP.
+  ENDIF.
+
+**SELECT
+* Fields
+  LOOP AT t_fields INTO ls_fields.
+    CLEAR lv_line.
+    AT FIRST.
+      lv_line = '  SELECT'.
+    ENDAT.
+
+    lv_field = ls_fields-name.
+    REPLACE '-' WITH '~' INTO lv_field.
+    TRANSLATE lv_field TO LOWER CASE.
+    lv_line+9 = lv_field.
+
+    PERFORM insert_line USING t_code_f01 lv_line.
+  ENDLOOP.
+
+**SELECT
+* From / Where
+  LOOP AT t_sql_code INTO lv_line.
+    PERFORM insert_line USING t_code_f01 lv_line.
+  ENDLOOP.
+
+  PERFORM insert_line:
+    USING t_code_f01 '',
+    USING t_code_f01 'ENDFORM.                    " GET_INCLUDE_F01',
+    USING t_code_f01 '',
+    USING t_code_f01 '*&---------------------------------------------------------------------*',
+    USING t_code_f01 '*&      Form  ALV',
+    USING t_code_f01 '*&---------------------------------------------------------------------*',
+    USING t_code_f01 'FORM alv USING t_data TYPE tyt_data.',
+    USING t_code_f01 '',
+    USING t_code_f01 '  DATA:'.
+
+* Check Sorted fields
+  READ TABLE t_fields WITH KEY sort = '01' INTO ls_fields.
+  IF sy-subrc = 0.
+    t_sorted_fields = t_fields.
+    DELETE t_sorted_fields WHERE sort IS INITIAL.
+    SORT t_sorted_fields BY sort.
+    PERFORM insert_line USING t_code_f01 '    o_sorts     TYPE REF TO cl_salv_sorts,'.
+  ENDIF.
+
+  PERFORM insert_line:
+    USING t_code_f01 '    o_columns   TYPE REF TO cl_salv_columns,',
+    USING t_code_f01 '    o_display   TYPE REF TO cl_salv_display_settings,',
+    USING t_code_f01 '    o_functions TYPE REF TO cl_salv_functions_list,',
+    USING t_code_f01 '    o_layout    TYPE REF TO cl_salv_layout,',
+    USING t_code_f01 '    ls_key      TYPE        salv_s_layout_key,',
+    USING t_code_f01 '    o_alv       TYPE REF TO cl_salv_table.',
+    USING t_code_f01 '',
+    USING t_code_f01 '* Gel ALV object',
+    USING t_code_f01 '  try.',
+    USING t_code_f01 '      cl_salv_table=>factory(',
+    USING t_code_f01 '        importing',
+    USING t_code_f01 '          r_salv_table = o_alv',
+    USING t_code_f01 '        changing',
+    USING t_code_f01 '          t_table      = t_data ).',
+    USING t_code_f01 '    catch cx_salv_msg.',
+    USING t_code_f01 '      message id sy-msgid type sy-msgty number sy-msgno',
+    USING t_code_f01 '              with sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.',
+    USING t_code_f01 '  endtry.',
+    USING t_code_f01 ''.
+
+* Add Sort
+  LOOP AT t_sorted_fields INTO ls_fields.
+    AT FIRST.
+      PERFORM insert_line:
+        USING t_code_f01 '* ALV Sort',
+        USING t_code_f01 '  o_sorts = o_alv->get_sorts( ).',
+        USING t_code_f01 '  TRY.'.
+    ENDAT.
+
+    READ TABLE t_fields_dd03l INDEX ls_fields-pos INTO ls_fields_dd03l.
+
+    IF ls_fields-descending IS INITIAL.
+      CLEAR lv_line.
+      lv_line+6  = 'o_sorts->add_sort('.
+      lv_line+25 = ''''.
+
+      CONCATENATE lv_line
+                  ls_fields_dd03l-fieldname
+                  ''''
+             INTO lv_line.
+
+      CONCATENATE lv_line
+                  ')'
+             INTO lv_line SEPARATED BY space.
+
+      CONCATENATE lv_line
+                  '.'
+             INTO lv_line.
+
+      PERFORM insert_line USING t_code_f01 lv_line.
+    ELSE.
+      PERFORM insert_line USING t_code_f01 '      CALL METHOD o_sorts->add_sort'.
+
+      CONCATENATE ''''
+                  ls_fields_dd03l-fieldname
+                  ''''
+             INTO lv_line.
+
+      CONCATENATE '        EXPORTING columnname ='
+                  lv_line
+             INTO lv_line SEPARATED BY space.
+
+      PERFORM insert_line:
+        USING t_code_f01 lv_line,
+        USING t_code_f01 '                  sequence   = if_salv_c_sort=>sort_down.'.
+    ENDIF.
+
+    AT LAST.
+      PERFORM insert_line:
+        USING t_code_f01 '    CATCH cx_salv_not_found',
+        USING t_code_f01 '          cx_salv_existing',
+        USING t_code_f01 '          cx_salv_data_error.',
+        USING t_code_f01 '      MESSAGE id sy-msgid type sy-msgty number sy-msgno',
+        USING t_code_f01 '         WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.',
+        USING t_code_f01 '    ENDTRY.',
+        USING t_code_f01 ''.
+    ENDAT.
+  ENDLOOP.
+
+  PERFORM insert_line:
+    USING t_code_f01 '* Get columns',
+    USING t_code_f01 '  o_columns = o_alv->get_columns( ).',
+    USING t_code_f01 '* Set the column optimization',
+    USING t_code_f01 '  o_columns->set_optimize( ).',
+    USING t_code_f01 '',
+    USING t_code_f01 '  o_display = o_alv->get_display_settings( ).',
+    USING t_code_f01 '  o_display->set_striped_pattern( abap_true ).',
+    USING t_code_f01 '',
+    USING t_code_f01 '* Generic ALV functions',
+    USING t_code_f01 '  o_functions = o_alv->get_functions( ).',
+    USING t_code_f01 '  o_functions->set_all( ).',
+    USING t_code_f01 '',
+    USING t_code_f01 '* Layout',
+    USING t_code_f01 '  o_layout = o_alv->get_layout( ).',
+    USING t_code_f01 '  ls_key-report = sy-repid.',
+    USING t_code_f01 '  o_layout->set_key( ls_key ).',
+    USING t_code_f01 '  o_layout->set_save_restriction( if_salv_c_layout=>restrict_none ).',
+    USING t_code_f01 '',
+    USING t_code_f01 '  o_alv->display( ).',
+    USING t_code_f01 '',
+    USING t_code_f01 'ENDFORM.                    " ALV'.
+
+ENDFORM.                    " GET_INCLUDE_F01
+
+*&---------------------------------------------------------------------*
+*&      Form  SELECTION_FIELDS_ALV
+*&---------------------------------------------------------------------*
+FORM selection_fields_alv CHANGING t_fields_sel TYPE tyt_sel_fields_alv.
+
+  DATA:
+    lo_cols          TYPE REF TO cl_salv_columns,
+    t_column_ref     TYPE        salv_t_column_ref,
+    lo_events        TYPE REF TO cl_salv_events_table,
+    lo_event_handler TYPE REF TO lcl_event_handler,
+    lo_display       TYPE REF TO cl_salv_display_settings.
+
+  TRY.
+      cl_salv_table=>factory(
+        IMPORTING
+          r_salv_table = o_alv
+        CHANGING
+          t_table      = t_fields_sel ).
+    CATCH cx_salv_msg.
+      MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+              WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDTRY.
+
+* Get all the Columns
+  lo_cols = o_alv->get_columns( ).
+* Set the column optimization
+  lo_cols->set_optimize( 'X' ).
+
+  t_column_ref = lo_cols->get( ).
+
+* Set colors, titles ...
+  PERFORM set_fieldcatalog USING lo_cols
+                                 t_column_ref.
+
+* Get the event object
+  lo_events = o_alv->get_event( ).
+* Instantiate the event handler object
+  CREATE OBJECT lo_event_handler.
+* Event handler
+  SET HANDLER lo_event_handler->on_link_click FOR lo_events.
+
+*
+  lo_display = o_alv->get_display_settings( ).
+  lo_display->set_striped_pattern( 'X' ).
+  lo_display->set_list_header( 'Query 2 Report / Selection Fields' ).
+
+  o_alv->display( ).
+
+ENDFORM.                    " SELECTION_FIELDS_ALV
+
+*&---------------------------------------------------------------------*
+*&      Form  set_fieldcatalog
+*&---------------------------------------------------------------------*
+FORM set_fieldcatalog
+
+     USING o_columns     TYPE REF TO cl_salv_columns
+           t_column_ref  TYPE        salv_t_column_ref.
+
+  DATA: o_column       TYPE REF TO cl_salv_column_table,
+        ls_column_ref  TYPE        salv_s_column_ref,
+        lv_short_text  TYPE        scrtext_s,
+        lv_medium_text TYPE        scrtext_m,
+        lv_long_text   TYPE        scrtext_l,
+        ls_color       TYPE        lvc_s_colo.
+
+  LOOP AT t_column_ref INTO ls_column_ref.
+    CLEAR: lv_short_text,
+           lv_medium_text,
+           lv_long_text.
+
+    CASE ls_column_ref-columnname.
+      WHEN 'FIELDNAME'.
+        TRY.
+            o_column ?= o_columns->get_column( ls_column_ref-columnname ).
+          CATCH cx_salv_not_found.
+            MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+                    WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+        ENDTRY.
+
+        o_column->set_visible( value  = if_salv_c_bool_sap=>false ).
+
+      WHEN 'PARAMETER'  OR
+           'OBLIGATORY' OR
+           'HIDDEN'     OR
+           'DISABLED'   OR
+           'DEFAULT'.
+
+        lv_short_text = ls_column_ref-columnname..
+
+        TRANSLATE lv_short_text TO LOWER CASE.
+        TRANSLATE lv_short_text(1) TO UPPER CASE.
+
+        TRY.
+            o_column ?= o_columns->get_column( ls_column_ref-columnname ).
+          CATCH cx_salv_not_found.
+            MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+                    WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+        ENDTRY.
+        ls_color-col = 4.
+        o_column->set_color( ls_color ).
+
+        o_column->set_cell_type( if_salv_c_cell_type=>checkbox_hotspot ).
+        o_column->set_output_length( 10 ).
+
+      WHEN 'SEL_FIELD'.
+        lv_short_text = 'Sel. field'.
+
+      WHEN 'FTEXT' OR
+           'DDTEXT'.
+
+        IF ls_column_ref-columnname = 'FTEXT'.
+          lv_short_text = 'Sel. Text'.
+        ENDIF.
+
+*       Get column
+        TRY.
+            o_column ?= o_columns->get_column( ls_column_ref-columnname ).
+          CATCH cx_salv_not_found.
+            MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+                    WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+        ENDTRY.
+
+*       Set HotSpot
+        TRY.
+            CALL METHOD o_column->set_cell_type
+              EXPORTING
+                value = if_salv_c_cell_type=>hotspot.
+          CATCH cx_salv_data_error .
+        ENDTRY.
+
+        ls_color-col = 4.
+        o_column->set_color( ls_color ).
+
+      WHEN 'DEFAULT_VALUE'.
+        lv_short_text = 'Value'.
+    ENDCASE.
+
+    IF NOT lv_short_text IS INITIAL.
+      ls_column_ref-r_column->set_short_text( lv_short_text ).
+      ls_column_ref-r_column->set_medium_text( lv_medium_text ).
+      ls_column_ref-r_column->set_long_text( lv_long_text ).
+    ENDIF.
+  ENDLOOP.
+
+ENDFORM.                    " SET_FIELDCATALOG
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_QUERY_FIELDLIST
+*&---------------------------------------------------------------------*
+FORM get_query_fieldlist
+
+     USING p_queryr               TYPE program_id
+           p_query_include_prefix TYPE program_id
+  CHANGING p_new_report           TYPE program_id
+           t_fields               TYPE tyt_fields
+           p_new_version          TYPE abap_bool                     "v2
+           t_assigned_report      TYPE tyt_char255                   "v2
+           t_dd03l                TYPE tyt_fields_dd03l
+           t_sel_fields           TYPE tyt_sel_fields
+           t_sel_fields_texts     TYPE tyt_sel_fields_texts
+           t_sel_fields_alv       TYPE tyt_sel_fields_alv.
+
+  DATA:
+    lv_workspace TYPE aqadef-wsid,
+    lv_usergroup TYPE aqadef-bgname,
+    lv_query     TYPE aqadef-quname,
+    lv_msg(50)   TYPE c.
+
+  CALL FUNCTION 'RSAQ_DECODE_REPORT_NAME'
+    EXPORTING
+      reportname      = p_queryr
+    IMPORTING
+      workspace       = lv_workspace
+      usergroup       = lv_usergroup
+      query           = lv_query
+*     client          =
+    EXCEPTIONS
+      no_query_report = 1
+      OTHERS          = 2.
+
+  IF sy-subrc = 0.
+    CONCATENATE 'ZQ2R_' lv_query INTO p_new_report.
+  ELSE.
+    MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+  ENDIF.
+
+  CALL FUNCTION 'RSAQ_REMOTE_QUERY_FIELDLIST'
+    EXPORTING
+      workspace    = lv_workspace
+      query        = lv_query
+      usergroup    = lv_usergroup
+    TABLES
+      fields       = t_fields
+      sel_fields   = t_sel_fields
+    EXCEPTIONS
+      no_usergroup = 1
+      no_query     = 2
+      no_selscreen = 3
+      OTHERS       = 4.
+
+  IF sy-subrc = 0.
+    DELETE t_sel_fields WHERE kind NE 'S'.
+  ELSE.
+    CASE sy-subrc.
+      WHEN '1'. lv_msg = 'no_usergroup'.
+      WHEN '2'. lv_msg = 'no_query'.
+      WHEN '3'. lv_msg = 'no_selscreen'.
+    ENDCASE.
+*   & & & &
+    MESSAGE s888(sabapdocu) WITH lv_msg DISPLAY LIKE c_symsgty_e.
+
+*   Get back to selection screen
+    PERFORM %_list_return IN PROGRAM sapmssy0.
+  ENDIF.
+
+  PERFORM get_assigned_report USING p_queryr                         "v2
+                           CHANGING t_assigned_report.               "v2
+
+  PERFORM get_dd03l USING p_query_include_prefix
+                          p_new_version                              "v2
+                          t_assigned_report                          "v2
+                          t_fields                                   "v2
+                 CHANGING t_dd03l.
+
+* Get customizable selection fields (t_sel_fields_alv)
+  PERFORM get_sel_fields_alv USING t_sel_fields
+                          CHANGING t_sel_fields_alv.
+
+  PERFORM get_sel_fields_texts USING t_sel_fields_alv
+                            CHANGING t_sel_fields_texts.
+
+ENDFORM.                    " GET_QUERY_FIELDLIST
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_SEL_FIELDS_ALV
+*&---------------------------------------------------------------------*
+FORM get_sel_fields_alv USING t_sel_fields     TYPE tyt_sel_fields
+                     CHANGING t_sel_fields_alv TYPE tyt_sel_fields_alv.
+
+  DATA:
+    ls_sel_fields       TYPE ty_sel_fields,
+    ls_sel_fields_alv   TYPE ty_sel_fields_alv,
+    lv_prev_sel_field   TYPE ty_sel_fields_alv-sel_field,
+    lv_length_sel_field TYPE i,
+    lv_index_sel_field  TYPE i.
+
+  LOOP AT t_sel_fields INTO ls_sel_fields.
+    CLEAR ls_sel_fields_alv.
+
+    SPLIT ls_sel_fields-fname AT '-'
+     INTO ls_sel_fields_alv-table_ref
+          ls_sel_fields_alv-field_ref.
+
+    CHECK NOT ls_sel_fields_alv-field_ref IS INITIAL.
+
+    ls_sel_fields_alv-obligatory = ls_sel_fields-obligatory.
+    ls_sel_fields_alv-hidden     = ls_sel_fields-nodisplay.
+
+    ls_sel_fields_alv-fieldname = ls_sel_fields-spname.
+    ls_sel_fields_alv-ftext     = ls_sel_fields-ftext.
+
+    CONCATENATE 's_' ls_sel_fields_alv-field_ref(6)
+           INTO ls_sel_fields_alv-sel_field.
+    TRANSLATE ls_sel_fields_alv-sel_field TO LOWER CASE.
+
+    APPEND ls_sel_fields_alv TO t_sel_fields_alv.
+  ENDLOOP.
+
+* Ensures that the parameters are unique
+  SORT t_sel_fields_alv BY sel_field.
+
+  LOOP AT t_sel_fields_alv INTO ls_sel_fields_alv.
+
+    IF lv_prev_sel_field = ls_sel_fields_alv-sel_field.
+      lv_index_sel_field = lv_index_sel_field + 1.
+
+      lv_length_sel_field = strlen( ls_sel_fields_alv-sel_field ) - 1.
+
+      ls_sel_fields_alv-sel_field+lv_length_sel_field(1) = lv_index_sel_field.
+      MODIFY t_sel_fields_alv FROM ls_sel_fields_alv.
+    ELSE.
+      CLEAR lv_index_sel_field.
+      lv_prev_sel_field = ls_sel_fields_alv-sel_field.
+    ENDIF.
+  ENDLOOP.
+
+  SORT t_sel_fields_alv BY fieldname.
+
+ENDFORM.                    " GET_SEL_FIELDS_ALV
+
+*&---------------------------------------------------------------------*
+*&      Form  INSERT_SELECTION_TEXTS
+*&---------------------------------------------------------------------*
+FORM insert_selection_texts
+
+  USING p_report           TYPE program_id
+        t_sel_fields_alv   TYPE tyt_sel_fields_alv
+        t_sel_fields_texts TYPE tyt_sel_fields_texts.
+
+  DATA:
+    ls_sel_fields_alv   TYPE          ty_sel_fields_alv,
+    ls_sel_fields_texts TYPE          ty_sel_fields_texts,
+    ls_text             TYPE          textpool,
+    t_text              TYPE TABLE OF textpool.
+
+  SORT t_sel_fields_texts BY ddlanguage.
+
+  LOOP AT t_sel_fields_texts INTO ls_sel_fields_texts.
+
+    READ TABLE t_sel_fields_alv
+      WITH KEY table_ref = ls_sel_fields_texts-tabname
+               field_ref = ls_sel_fields_texts-fieldname
+          INTO ls_sel_fields_alv.
+
+    ls_text-id      = 'S'.
+    ls_text-key     = ls_sel_fields_alv-sel_field.
+    TRANSLATE ls_text-key TO UPPER CASE.
+    ls_text-entry+8 = ls_sel_fields_texts-ddtext.
+    ls_text-length  = strlen( ls_sel_fields_texts-ddtext ).
+
+    APPEND ls_text TO t_text.
+
+    AT END OF ddlanguage.
+      INSERT TEXTPOOL p_report FROM t_text LANGUAGE ls_sel_fields_texts-ddlanguage.
+      CLEAR t_text.
+    ENDAT.
+  ENDLOOP.
+
+ENDFORM.                    " INSERT_SELECTION_TEXTS
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_ASSIGNED_REPORT                                    "v2
+*&---------------------------------------------------------------------*
+FORM get_assigned_report USING p_queryr          TYPE program_id
+                      CHANGING t_assigned_report TYPE tyt_char255.
+
+  READ REPORT p_queryr INTO t_assigned_report.
+
+ENDFORM.                    " GET_ASSIGNED_REPORT
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_DD03L_FROM_ASSIGNED_REPORT                         "v2
+*&---------------------------------------------------------------------*
+FORM get_dd03l_from_assigned_report
+
+     USING t_assigned_report TYPE tyt_char255
+  CHANGING t_dd03l           TYPE tyt_fields_dd03l.
+
+  DATA:
+    lv_code_line TYPE ty_char255,
+    ls_dd03l     TYPE dd03l,
+    lv_structure TYPE c.
+
+  LOOP AT t_assigned_report INTO lv_code_line.
+
+    CONDENSE lv_code_line.
+
+    IF NOT lv_structure IS INITIAL.
+      IF lv_code_line(12) = 'end of %g00.'.
+        EXIT.
+      ENDIF.
+
+      SPLIT lv_code_line AT space INTO ls_dd03l-fieldname
+                                       lv_code_line.
+
+      APPEND ls_dd03l TO t_dd03l.
+
+    ELSEIF lv_code_line(19) = 'data: begin of %g00'.
+      lv_structure = abap_true.
+    ENDIF.
+
+  ENDLOOP.
+
+ENDFORM.                    " GET_DD03L_FROM_ASSIGNED_REPORT
+
+*&---------------------------------------------------------------------*
+*&      Form  get_dd03l_from_t_fields                                "v2
+*&---------------------------------------------------------------------*
+FORM get_dd03l_from_t_fields USING t_fields TYPE tyt_fields
+                          CHANGING t_dd03l  TYPE tyt_fields_dd03l.
+
+  DATA:
+    ls_fields                 TYPE ty_fields,
+    lt_dd03l                  TYPE STANDARD TABLE OF dd03l,
+    ls_dd03l                  TYPE                   dd03l,
+    lv_length                 TYPE i,
+    lv_length_greater_than_30 TYPE abap_bool.
+
+  LOOP AT t_fields INTO ls_fields.
+
+    lv_length = strlen( ls_fields-name ).
+    IF lv_length > 30.
+      lv_length_greater_than_30 = abap_true.
+      EXIT.
+    ENDIF.
+
+    ls_dd03l-fieldname = ls_fields-name.
+    REPLACE '-' WITH '_' INTO ls_dd03l-fieldname.
+    APPEND ls_dd03l TO lt_dd03l.
+  ENDLOOP.
+
+  t_dd03l = lt_dd03l.
+
+ENDFORM.                    "get_dd03l_from_t_fields
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_DD03L
+*&---------------------------------------------------------------------*
+FORM get_dd03l USING p_query_include_prefix TYPE program_id
+                     p_new_version          TYPE abap_bool           "v2
+                     t_assigned_report      TYPE tyt_char255         "v2
+                     t_fields               TYPE tyt_fields          "v2
+            CHANGING t_dd03l                TYPE tyt_fields_dd03l.
+
+  DATA lv_tabname TYPE tabname.
+
+  lv_tabname = p_query_include_prefix(30).
+
+  SELECT * FROM dd03l INTO TABLE t_dd03l WHERE tabname = lv_tabname.
+
+  IF sy-subrc = 0.
+    CLEAR p_new_version.                                             "v2
+    SORT t_dd03l BY position.
+  ELSE.
+    p_new_version = abap_true.                                       "v2
+
+    PERFORM get_dd03l_from_assigned_report USING t_assigned_report   "v2
+                                        CHANGING t_dd03l.            "v2
+
+    PERFORM get_dd03l_from_t_fields USING t_fields                   "v2
+                                 CHANGING t_dd03l.                   "v2
+*   & & & &
+*   MESSAGE s888(sabapdocu) WITH 'Structure'                         "v2
+*                                 lv_tabname                         "v2
+*                                 'not found'                        "v2
+*                    DISPLAY LIKE c_symsgty_e.                       "v2
+*                                                                    "v2
+**  Get back to selection screen                                     "v2
+*   PERFORM %_list_return IN PROGRAM sapmssy0.                       "v2
+  ENDIF.
+
+ENDFORM.                                                    " GET_DD03L
+
+*&---------------------------------------------------------------------*
+*&      Form  POPUP
+*&---------------------------------------------------------------------*
+FORM popup USING p_popup_title  TYPE cua_tit_tx
+        CHANGING t_popup_fileds TYPE tyt_sval
+                 p_returncode   TYPE c.
+
+  CALL FUNCTION 'POPUP_GET_VALUES'
+    EXPORTING
+*     NO_VALUE_CHECK  = ' '
+      popup_title     = p_popup_title
+      start_column    = '20'
+      start_row       = '16'
+    IMPORTING
+      returncode      = p_returncode
+    TABLES
+      fields          = t_popup_fileds
+    EXCEPTIONS
+      error_in_fields = 1
+      OTHERS          = 2.
+
+  IF sy-subrc <> 0.
+* Implement suitable error handling here
+  ENDIF.
+
+ENDFORM.                    " POPUP
+
+*&---------------------------------------------------------------------*
+*&      Form  DEFAULT_POPUP
+*&---------------------------------------------------------------------*
+FORM default_popup USING p_tabname       TYPE tabname
+                         p_fieldname     TYPE fieldname
+                CHANGING p_default_value TYPE any.
+
+  DATA:
+    lv_returncode   TYPE c,
+    t_popup_fields  TYPE STANDARD TABLE OF sval,
+    ls_popup_fields TYPE                   sval.
+
+  ls_popup_fields-tabname   = p_tabname.
+  ls_popup_fields-fieldname = p_fieldname.
+  ls_popup_fields-field_obl = 'X'.
+
+  APPEND ls_popup_fields TO t_popup_fields.
+
+  PERFORM popup USING 'Default Value'
+             CHANGING t_popup_fields
+                      lv_returncode.
+
+  IF lv_returncode IS INITIAL.
+    READ TABLE t_popup_fields INTO ls_popup_fields INDEX 1.
+
+    p_default_value = ls_popup_fields-value.
+  ENDIF.
+
+ENDFORM.                    " DEFAULT_POPUP
+
+*&---------------------------------------------------------------------*
+*&      Form  GET_SEL_FIELDS_TEXTS
+*&---------------------------------------------------------------------*
+FORM get_sel_fields_texts
+
+     USING t_sel_fields_alv   TYPE tyt_sel_fields_alv
+  CHANGING t_sel_fields_texts TYPE tyt_sel_fields_texts.
+
+  CLEAR t_sel_fields_texts.
+
+  CHECK NOT t_sel_fields_alv IS INITIAL.
+
+  SELECT dd04t~ddlanguage
+         t002t~sptxt
+         dd03l~tabname
+         dd03l~fieldname
+         dd04t~ddtext
+    FROM dd03l
+      INNER JOIN dd04t ON dd03l~rollname = dd04t~rollname
+                      AND dd03l~as4local = dd04t~as4local
+                      AND dd03l~as4vers  = dd04t~as4vers
+       LEFT JOIN t002t ON t002t~spras    = sy-langu
+                      AND dd04t~ddlanguage = t002t~sprsl
+    INTO TABLE t_sel_fields_texts
+     FOR ALL ENTRIES IN t_sel_fields_alv
+   WHERE dd03l~tabname   = t_sel_fields_alv-table_ref
+     AND dd03l~fieldname = t_sel_fields_alv-field_ref.
+
+  IF sy-subrc = 0.
+    SORT t_sel_fields_texts BY ddlanguage tabname fieldname.
+  ENDIF.
+
+ENDFORM.                    " GET_SEL_FIELDS_TEXTS
+
+*&---------------------------------------------------------------------*
+*&      Form  SET_SELECTION_FIELD_TEXTS
+*&---------------------------------------------------------------------*
+FORM set_selection_field_texts
+
+     USING p_row                  TYPE salv_de_row
+  CHANGING t_sel_fields_alv       TYPE tyt_sel_fields_alv
+           t_sel_fields_texts     TYPE tyt_sel_fields_texts
+           t_sel_fields_texts_alv TYPE tyt_sel_fields_texts_alv.
+
+  DATA:
+    ls_sel_fields_alv       TYPE                   ty_sel_fields_alv,
+    ls_sel_fields_texts     TYPE                   ty_sel_fields_texts,
+    ls_sel_fields_texts_alv TYPE                   ty_sel_fields_texts_alv.
+
+  CLEAR t_sel_fields_texts_alv.
+
+  READ TABLE t_sel_fields_alv INDEX p_row INTO ls_sel_fields_alv.
+
+  LOOP AT t_sel_fields_texts INTO ls_sel_fields_texts
+    WHERE tabname   = ls_sel_fields_alv-table_ref
+      AND fieldname = ls_sel_fields_alv-field_ref.
+
+    ls_sel_fields_texts_alv-ddlanguage = ls_sel_fields_texts-ddlanguage.
+    ls_sel_fields_texts_alv-sptxt      = ls_sel_fields_texts-sptxt.
+    ls_sel_fields_texts_alv-ddtext     = ls_sel_fields_texts-ddtext.
+
+    APPEND ls_sel_fields_texts_alv TO t_sel_fields_texts_alv.
+  ENDLOOP.
+
+  PERFORM selection_field_texts_alv CHANGING o_selection_texts_alv
+                                             t_sel_fields_texts_alv.
+
+ENDFORM.                    " SET_SELECTION_FIELD_TEXTS
+
+*&---------------------------------------------------------------------*
+*&      Form  SELECTION_FIELD_TEXTS_ALV
+*&---------------------------------------------------------------------*
+FORM selection_field_texts_alv
+
+  CHANGING o_alv                  TYPE REF TO cl_salv_table
+           t_sel_fields_texts_alv TYPE        tyt_sel_fields_texts_alv.
+
+  DATA:
+    lo_columns       TYPE REF TO cl_salv_columns,
+    t_column_ref     TYPE        salv_t_column_ref,
+    lo_events        TYPE REF TO cl_salv_events_table,
+    lo_event_handler TYPE REF TO lcl_event_handler,
+    lo_display       TYPE REF TO cl_salv_display_settings.
+
+  IF o_alv IS INITIAL.
+
+    TRY.
+        cl_salv_table=>factory(
+          IMPORTING
+            r_salv_table = o_alv
+          CHANGING
+            t_table      = t_sel_fields_texts_alv ).
+      CATCH cx_salv_msg.
+        MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+                WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+    ENDTRY.
+
+    lo_display = o_alv->get_display_settings( ).
+    lo_display->set_striped_pattern( 'X' ).
+    lo_display->set_list_header( 'Selection Texts' ).
+
+*   Set the column optimization
+    lo_columns = o_alv->get_columns( ).
+    lo_columns->set_optimize( abap_true ).
+
+    t_column_ref = lo_columns->get( ).
+
+*   Set fieldcatalog / colors, etc ...
+    PERFORM set_fieldcatalog USING lo_columns
+                                   t_column_ref.
+
+*   Get the event object
+    lo_events = o_alv->get_event( ).
+    CREATE OBJECT lo_event_handler.
+    SET HANDLER lo_event_handler->on_link_click FOR lo_events.
+
+    o_alv->set_screen_popup( start_column = 100
+                              end_column   = 150
+                              start_line   = 3
+                              end_line     = 10 ).
+
+    o_alv->display( ).
+  ELSE.
+    o_alv->refresh( ).
+  ENDIF.
+
+ENDFORM.                    " SELECTION_FIELD_TEXTS_ALV
+
+*&---------------------------------------------------------------------*
+*&      Form  SELECTION_TEXT_POPUP
+*&---------------------------------------------------------------------*
+FORM selection_text_popup
+
+     USING o_alv                  TYPE REF TO cl_salv_table
+           o_selection_texts_alv  TYPE REF TO cl_salv_table
+           p_row                  TYPE salv_de_row
+  CHANGING t_sel_fields_texts_alv TYPE tyt_sel_fields_texts_alv
+           t_sel_fields_alv       TYPE tyt_sel_fields_alv
+           t_sel_fields_texts     TYPE tyt_sel_fields_texts.
+
+  DATA:
+    ls_sel_fields_texts_alv TYPE ty_sel_fields_texts_alv,
+    lv_returncode           TYPE c,
+    t_popup_fields          TYPE STANDARD TABLE OF sval,
+    ls_popup_fields         TYPE                   sval,
+
+    lo_selections           TYPE REF TO cl_salv_selections,
+    t_rows                  TYPE        salv_t_row,
+    lv_rows                 TYPE        salv_de_row,
+
+    ls_sel_fields_alv       TYPE        ty_sel_fields_alv,
+    ls_sel_fields_texts     TYPE        ty_sel_fields_texts.
+
+  READ TABLE t_sel_fields_texts_alv INDEX p_row INTO ls_sel_fields_texts_alv.
+
+  ls_popup_fields-tabname    = 'DD04T'.
+  ls_popup_fields-fieldname  = 'DDLANGUAGE'.
+  ls_popup_fields-field_attr = '02'. "data entry not possible
+  ls_popup_fields-value      = ls_sel_fields_texts_alv-ddlanguage.
+  APPEND ls_popup_fields TO t_popup_fields.
+
+  ls_popup_fields-fieldname  = 'DDTEXT'.
+  CLEAR ls_popup_fields-field_attr.
+  ls_popup_fields-field_obl = abap_true.
+  ls_popup_fields-value      = ls_sel_fields_texts_alv-ddtext.
+  APPEND ls_popup_fields TO t_popup_fields.
+
+  PERFORM popup USING 'Selection Text'
+             CHANGING t_popup_fields
+                      lv_returncode.
+
+  CHECK lv_returncode IS INITIAL.
+
+  READ TABLE t_popup_fields INDEX 2 INTO ls_popup_fields.
+
+  CHECK ls_popup_fields-value NE ls_sel_fields_texts_alv-ddtext.
+
+  LOOP AT t_sel_fields_texts_alv INTO ls_sel_fields_texts_alv FROM p_row.
+    ls_sel_fields_texts_alv-ddtext = ls_popup_fields-value.
+    MODIFY t_sel_fields_texts_alv FROM ls_sel_fields_texts_alv.
+    EXIT.
+  ENDLOOP.
+
+  o_selection_texts_alv->refresh( ).
+
+  lo_selections = o_alv->get_selections( ).
+  t_rows = lo_selections->get_selected_rows( ).
+  READ TABLE t_rows INDEX 1 INTO lv_rows.
+
+  READ TABLE t_sel_fields_alv INDEX lv_rows INTO ls_sel_fields_alv.
+
+  IF ls_sel_fields_texts_alv-ddlanguage = sy-langu.
+    ls_sel_fields_alv-ftext = ls_popup_fields-value.
+    MODIFY t_sel_fields_alv INDEX lv_rows FROM ls_sel_fields_alv.
+  ENDIF.
+
+  LOOP AT t_sel_fields_texts INTO ls_sel_fields_texts
+    WHERE tabname    = ls_sel_fields_alv-table_ref
+      AND fieldname  = ls_sel_fields_alv-field_ref
+      AND ddlanguage = ls_sel_fields_texts_alv-ddlanguage.
+
+    ls_sel_fields_texts-ddtext = ls_popup_fields-value.
+    MODIFY t_sel_fields_texts FROM ls_sel_fields_texts.
+  ENDLOOP.
+
+  o_alv->refresh( ).
+
+ENDFORM.                    " SELECTION_TEXT_POPUP
+
+*&---------------------------------------------------------------------*
+*&      Form  set_selection_screen_text
+*&---------------------------------------------------------------------*
+FORM set_selection_screen_text USING p_group3 TYPE screen-group3
+                                     p_param  TYPE any
+                                     p_text   TYPE textpooltx.
+
+  DATA:
+    lv_text  TYPE stextt, "Texto explicativo select-option/parámetro
+    lv_block TYPE i.
+
+  FIELD-SYMBOLS:
+    <field> TYPE any,
+    <text>  TYPE any.
+
+  CASE p_group3.
+    WHEN 'BLK'.
+      LOOP AT SCREEN.
+        IF screen-group3 = p_group3.
+          lv_block = lv_block + 1.
+          IF lv_block = p_param.
+            lv_text = screen-name.
+            EXIT.
+          ENDIF.
+        ENDIF.
+      ENDLOOP.
+    WHEN 'TXT'.
+      CONCATENATE '%_' p_param '_%_APP_%-TEXT' INTO lv_text.
+  ENDCASE.
+
+  ASSIGN (lv_text) TO <text>.
+  CHECK sy-subrc = 0.
+  <text> = p_text.
+
+ENDFORM.                    " SET_SELECTION_SCREEN_TEXT
+
+*&---------------------------------------------------------------------*
+*&      Form  INSERT_CODE_INTO_REPORT
+*&---------------------------------------------------------------------*
+FORM insert_code_into_report USING p_create_include TYPE flag
+                                   t_include_code   TYPE tyt_char255
+                          CHANGING t_report_code    TYPE tyt_char255.
+
+  DATA ls_code TYPE ty_char255.
+
+  CHECK p_create_include IS INITIAL.
+
+  LOOP AT t_include_code INTO ls_code.
+    APPEND ls_code TO t_report_code.
+  ENDLOOP.
+
+ENDFORM.                    " INSERT_CODE_INTO_REPORT
+
+*&---------------------------------------------------------------------*
+*&  Include           ZQ2R
+*&---------------------------------------------------------------------*
+SELECTION-SCREEN:
+  FUNCTION KEY 1.
+
+INITIALIZATION.
+* Set QuickViewer Button
+  functxt-icon_id   =  icon_tools.
+  functxt-quickinfo = 'QuickViewer'.
+  functxt-icon_text = 'QuickViewer'.
+  sscrfields-functxt_01 = functxt.
+
+AT SELECTION-SCREEN.
+  CASE sy-ucomm.
+    WHEN 'FC01'.
+      CALL TRANSACTION 'SQVI'.
+  ENDCASE.
+
+AT SELECTION-SCREEN OUTPUT.
+* Set selection texts and title frames
+  PERFORM set_selection_screen_text:
+    USING 'BLK' 1          'Query',
+    USING 'TXT' 'P_QUERYR' 'Assigned report',
+    USING 'BLK' 2          'New Report (includes)',
+    USING 'TXT' 'P_TOP'    'Top',
+    USING 'TXT' 'P_SEL'    'Selection screen',
+    USING 'TXT' 'P_FORMS'  'Forms'.
+
+START-OF-SELECTION.
+
+* Get include prefix (query generated program)
+  PERFORM get_query_include_prefix USING p_queryr
+                                CHANGING gv_query_include_prefix.
+
+* Get fieldcatalog and selection fields
+  PERFORM get_query_fieldlist
+       USING p_queryr
+             gv_query_include_prefix
+    CHANGING gv_new_report
+             t_fields           "Field catalog
+             gv_new_version_of_assig_report                          "v2
+             t_assigned_report                                       "v2
+             t_fields_dd03l
+             t_sel_fields       "selection fields
+             t_sel_fields_texts "selection texts
+             t_sel_fields_alv.  "customizable selection fields
+
+END-OF-SELECTION.
+* Set selection fields
+  PERFORM selection_fields_alv CHANGING t_sel_fields_alv.
+
+* Get tables (used by select-options)
+  PERFORM get_tables USING t_sel_fields_alv
+                  CHANGING t_tables.
+
+  IF gv_new_version_of_assig_report IS INITIAL.                      "v2
+*   Get includes from query generated program
+    PERFORM read_include:
+*     Selection screen
+      USING gv_query_include_prefix c_include_suffix_sscr CHANGING t_code_sscr,
+*     Module for selecting data
+      USING gv_query_include_prefix c_include_suffix_u02  CHANGING t_code_u02.
+
+*   Get SQL (From & Where)
+    PERFORM get_sql USING t_code_u02
+                          t_sel_fields_alv
+                 CHANGING t_sql_code.
+
+*   Get Select-Options
+    PERFORM get_sel USING gv_new_report
+                          t_code_sscr
+                          t_sel_fields_alv
+                 CHANGING t_sel_code.
+  ELSE.                                                              "v2
+*   Get SQL (From & Where)
+    PERFORM get_sql USING t_assigned_report
+                          t_sel_fields_alv
+                 CHANGING t_sql_code.
+*   Get Select-Options
+    PERFORM get_sel USING gv_new_report
+                          t_assigned_report
+                          t_sel_fields_alv
+                 CHANGING t_sel_code.
+  ENDIF.
+
+* Get Top
+  PERFORM get_include_top USING gv_new_report
+                                t_tables
+                                t_sel_fields_alv
+                                t_fields_dd03l
+                       CHANGING t_top_code.
+
+* Get Forms
+  PERFORM get_include_f01 USING gv_new_report
+                                t_sel_fields_alv
+                                t_fields
+                                t_fields_dd03l
+                                t_sql_code
+                       CHANGING t_forms_code.
+
+* Create includes
+  CLEAR t_includes.
+  PERFORM insert_include:
+    USING p_top   gv_new_report c_top_suffix t_top_code   CHANGING t_includes,
+    USING p_sel   gv_new_report c_sel_suffix t_sel_code   CHANGING t_includes,
+    USING p_forms gv_new_report c_f01_suffix t_forms_code CHANGING t_includes.
+
+* Create report
+  PERFORM insert_report USING gv_new_report
+                              t_sel_fields_alv
+                              t_includes
+                              p_top
+                              p_sel
+                              p_forms
+                              t_top_code
+                              t_sel_code
+                              t_forms_code
+                     CHANGING t_code.
+
+* Create seletion texts
+  PERFORM insert_selection_texts USING gv_new_report
+                                       t_sel_fields_alv
+                                       t_sel_fields_texts.
